@@ -1,0 +1,48 @@
+{
+	"manifest_version": 2,
+	"name": "RobotsTxt",
+	"namespace": "MediaWiki\\Extension\\RobotsTxt",
+	"version": "0.1.0",
+	"author": [ "Luca Mauri" ],
+	"url": "https://github.com/lucamauri/RobotsTxt",
+	"descriptionmsg": "robotstxt-desc",
+	"license-name": "GPL-2.0-or-later",
+	"type": "specialpage",
+	"requires": {
+		"MediaWiki": ">= 1.43.0",
+		"platform": {
+			"php": ">= 8.1"
+		}
+	},
+	"AutoloadNamespaces": {
+		"MediaWiki\\Extension\\RobotsTxt\\": "includes/"
+	},
+	"SpecialPages": {
+		"RobotsTxt": {
+			"class": "MediaWiki\\Extension\\RobotsTxt\\Specials\\SpecialRobotsTxt",
+			"services": [
+				"MainConfig",
+				"RevisionLookup",
+				"TitleFactory",
+				"SpecialPageFactory",
+				"ContentLanguage"
+			]
+		}
+	},
+	"MessagesDirs": {
+		"RobotsTxt": [ "i18n" ]
+	},
+	"ExtensionMessagesFiles": {
+		"RobotsTxtAlias": "i18n/RobotsTxt.alias.php"
+	},
+	"config": {
+		"RobotsTxtUseDefaults": {
+			"value": true,
+			"description": "Serve generated default rules when MediaWiki:Robots.txt is missing or empty. If false, an allow-all file is served instead."
+		},
+		"RobotsTxtCacheMaxAge": {
+			"value": 3600,
+			"description": "Cache lifetime in seconds sent in the Cache-Control header of /robots.txt."
+		}
+	}
+}
