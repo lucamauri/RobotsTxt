@@ -1,0 +1,9 @@
+{
+    "@metadata": {
+        "authors": [
+            "Luca Mauri"
+        ]
+    },
+    "robotstxt-desc": "{{desc|name=RobotsTxt|url=https://github.com/lucamauri/RobotsTxt}}",
+    "robotstxt": "{{doc-special|RobotsTxt}}\nName of the special page that serves the robots.txt file. It is a plain-text endpoint, so this name is only seen in Special:SpecialPages. \"robots.txt\" is a file name and should normally not be translated."
+}

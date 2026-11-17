@@ -1,0 +1,9 @@
+{
+    "@metadata": {
+        "authors": [
+            "Luca Mauri"
+        ]
+    },
+    "robotstxt-desc": "Serves robots.txt from the wiki, using the page MediaWiki:Robots.txt or generated default rules.",
+    "robotstxt": "Robots.txt"
+}
