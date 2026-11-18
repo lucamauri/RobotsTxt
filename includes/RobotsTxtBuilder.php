@@ -26,7 +26,7 @@ use MediaWiki\Title\TitleFactory;
  *     nothing. This includes a page with only comments: writing the page is
  *     a deliberate choice by an administrator, so we do not second-guess it.
  *  2. If the page is missing or empty and generated defaults are enabled,
- *     serve the defaults. (Placeholder for now: an allow-all file.)
+ *     serve the defaults made by DefaultRulesGenerator.
  *  3. Otherwise serve an allow-all file, which is also what crawlers assume
  *     when a site has no robots.txt at all.
  */
@@ -49,6 +49,8 @@ class RobotsTxtBuilder {
 	 * @param RevisionLookup $revisionLookup Used to read the latest
 	 *   revision of the rules page.
 	 * @param TitleFactory $titleFactory Used to build the page title.
+	 * @param DefaultRulesGenerator $defaultRules Produces the generated
+	 *   defaults. Injected so that tests can supply a fake.
 	 * @param bool $useDefaults Value of $wgRobotsTxtUseDefaults. It is passed
 	 *   in, rather than read from the configuration here, so tests can set it
 	 *   without a MediaWiki configuration.
@@ -56,6 +58,7 @@ class RobotsTxtBuilder {
 	public function __construct(
 		private readonly RevisionLookup $revisionLookup,
 		private readonly TitleFactory $titleFactory,
+		private readonly DefaultRulesGenerator $defaultRules,
 		private readonly bool $useDefaults
 	) {
 	}
@@ -113,16 +116,13 @@ class RobotsTxtBuilder {
 	/**
 	 * The text served when the page is missing or empty and defaults are on.
 	 *
-	 * Placeholder in this step: the real generated rules come in the next
-	 * step. The first line says where the text comes from, so an
+	 * The generator's first line says where the text comes from, so an
 	 * administrator who runs curl on /robots.txt knows why it looks like this.
 	 *
 	 * @return string
 	 */
 	private function buildDefaults(): string {
-		return "# RobotsTxt extension: generated defaults are not available yet,"
-			. " everything is allowed.\n"
-			. self::ALLOW_ALL;
+		return $this->defaultRules->generate();
 	}
 
 	/**

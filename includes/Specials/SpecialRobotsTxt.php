@@ -9,9 +9,12 @@
 namespace MediaWiki\Extension\RobotsTxt\Specials;
 
 use MediaWiki\Config\Config;
+use MediaWiki\Extension\RobotsTxt\DefaultRulesGenerator;
 use MediaWiki\Extension\RobotsTxt\RobotsTxtBuilder;
+use MediaWiki\Language\Language;
 use MediaWiki\Revision\RevisionLookup;
 use MediaWiki\SpecialPage\SpecialPage;
+use MediaWiki\Title\NamespaceInfo;
 use MediaWiki\Title\TitleFactory;
 
 /**
@@ -34,13 +37,17 @@ class SpecialRobotsTxt extends SpecialPage {
 	 *   RobotsTxt* settings.
 	 * @param RevisionLookup $revisionLookup Passed on to the builder.
 	 * @param TitleFactory $titleFactory Passed on to the builder.
-	 *   All three are injected by MediaWiki from the "services" list of this
+	 * @param Language $contentLanguage Passed on to the rules generator.
+	 * @param NamespaceInfo $namespaceInfo Passed on to the rules generator.
+	 *   All five are injected by MediaWiki from the "services" list of this
 	 *   special page in extension.json, in that order.
 	 */
 	public function __construct(
 		private readonly Config $config,
 		private readonly RevisionLookup $revisionLookup,
-		private readonly TitleFactory $titleFactory
+		private readonly TitleFactory $titleFactory,
+		private readonly Language $contentLanguage,
+		private readonly NamespaceInfo $namespaceInfo
 	) {
 		// The name must match the key in "SpecialPages" in extension.json
 		// and the alias in i18n/RobotsTxt.alias.php.
@@ -80,6 +87,11 @@ class SpecialRobotsTxt extends SpecialPage {
 		$builder = new RobotsTxtBuilder(
 			$this->revisionLookup,
 			$this->titleFactory,
+			DefaultRulesGenerator::newFromWiki(
+				$this->config,
+				$this->contentLanguage,
+				$this->namespaceInfo
+			),
 			(bool)$this->config->get( 'RobotsTxtUseDefaults' )
 		);
 		return $builder->build();

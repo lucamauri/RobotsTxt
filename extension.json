@@ -25,7 +25,9 @@
 			"services": [
 				"MainConfig",
 				"RevisionLookup",
-				"TitleFactory"
+				"TitleFactory",
+				"ContentLanguage",
+				"NamespaceInfo"
 			]
 		}
 	},
