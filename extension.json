@@ -23,7 +23,9 @@
 		"RobotsTxt": {
 			"class": "MediaWiki\\Extension\\RobotsTxt\\Specials\\SpecialRobotsTxt",
 			"services": [
-				"MainConfig"
+				"MainConfig",
+				"RevisionLookup",
+				"TitleFactory"
 			]
 		}
 	},

@@ -9,7 +9,10 @@
 namespace MediaWiki\Extension\RobotsTxt\Specials;
 
 use MediaWiki\Config\Config;
+use MediaWiki\Extension\RobotsTxt\RobotsTxtBuilder;
+use MediaWiki\Revision\RevisionLookup;
 use MediaWiki\SpecialPage\SpecialPage;
+use MediaWiki\Title\TitleFactory;
 
 /**
  * Serves robots.txt as plain text.
@@ -21,26 +24,27 @@ use MediaWiki\SpecialPage\SpecialPage;
  * index.php?title=Special:RobotsTxt (see the project documentation).
  *
  * This class only deals with the HTTP side (headers and output). What the
- * file actually contains is decided elsewhere, so that it can be tested
- * without a web request. In this first version the body is a fixed test
- * string.
+ * file actually contains is decided by RobotsTxtBuilder, so that it can be
+ * tested without a web request.
  */
 class SpecialRobotsTxt extends SpecialPage {
 
 	/**
-	 * @var Config Site configuration, used to read $wgRobotsTxtCacheMaxAge.
+	 * @param Config $config Site configuration, used to read the
+	 *   RobotsTxt* settings.
+	 * @param RevisionLookup $revisionLookup Passed on to the builder.
+	 * @param TitleFactory $titleFactory Passed on to the builder.
+	 *   All three are injected by MediaWiki from the "services" list of this
+	 *   special page in extension.json, in that order.
 	 */
-	private Config $config;
-
-	/**
-	 * @param Config $config Injected by MediaWiki from the "services" list
-	 *   of this special page in extension.json ("MainConfig").
-	 */
-	public function __construct( Config $config ) {
+	public function __construct(
+		private readonly Config $config,
+		private readonly RevisionLookup $revisionLookup,
+		private readonly TitleFactory $titleFactory
+	) {
 		// The name must match the key in "SpecialPages" in extension.json
 		// and the alias in i18n/RobotsTxt.alias.php.
 		parent::__construct( 'RobotsTxt' );
-		$this->config = $config;
 	}
 
 	/**
@@ -68,18 +72,16 @@ class SpecialRobotsTxt extends SpecialPage {
 	}
 
 	/**
-	 * The content of the file.
-	 *
-	 * Phase 1, step 1: a fixed test string, so that the headers can be
-	 * verified on a live wiki before any rule logic exists. It is an
-	 * "allow everything" file, so it is harmless if a crawler ever sees it.
-	 * It will be replaced by the output of RobotsTxtBuilder.
+	 * The content of the file, as decided by the builder.
 	 *
 	 * @return string
 	 */
 	private function getBody(): string {
-		return "# RobotsTxt extension: test output\n"
-			. "User-agent: *\n"
-			. "Disallow:\n";
+		$builder = new RobotsTxtBuilder(
+			$this->revisionLookup,
+			$this->titleFactory,
+			(bool)$this->config->get( 'RobotsTxtUseDefaults' )
+		);
+		return $builder->build();
 	}
 }
