@@ -31,6 +31,14 @@
 			]
 		}
 	},
+	"HookHandlers": {
+		"main": {
+			"class": "MediaWiki\\Extension\\RobotsTxt\\Hooks\\RobotsTxtHooks"
+		}
+	},
+	"Hooks": {
+		"TestCanonicalRedirect": "main"
+	},
 	"MessagesDirs": {
 		"RobotsTxt": [
 			"i18n"
