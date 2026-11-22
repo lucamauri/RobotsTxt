@@ -26,7 +26,9 @@ use MediaWikiUnitTestCase;
  * The builder decides which text is served as robots.txt:
  *  1. the text of MediaWiki:Robots.txt, normalised, when it has content;
  *  2. otherwise the generated defaults, when they are enabled;
- *  3. otherwise a fixed allow-all file.
+ *  3. otherwise a fixed allow-all file;
+ * and then, whichever of the three it was, appends the block of "Sitemap:"
+ * lines made from $wgRobotsTxtSitemaps (nothing when the list is empty).
  *
  * What is real and what is replaced:
  *  - The page content is a real TextContent (or WikitextContent) object,
@@ -36,6 +38,9 @@ use MediaWikiUnitTestCase;
  *    generator are mocks. The generator mock returns a fixed marker text, so
  *    a builder test can only fail because of builder logic, never because the
  *    generated defaults changed: those have their own tests.
+ *  - SitemapBlock is real. It is a pure function with no dependencies, and
+ *    its own rules are tested in SitemapBlockTest; here only the wiring is
+ *    checked (where the block goes and what text it is checked against).
  *
  * Every test also states whether the generator must be called. That checks
  * the decision order (page first, defaults only as a fallback) and not just
@@ -106,12 +111,15 @@ class RobotsTxtBuilderTest extends MediaWikiUnitTestCase {
 	 *   when the page does not exist.
 	 * @param bool $useDefaults Value of $wgRobotsTxtUseDefaults
 	 * @param DefaultRulesGenerator $generator The (mock) generator
+	 * @param array $sitemaps Value of $wgRobotsTxtSitemaps (empty by default,
+	 *   so the tests that are not about sitemaps do not mention them)
 	 * @return RobotsTxtBuilder
 	 */
 	private function makeBuilder(
 		?RevisionRecord $revision,
 		bool $useDefaults,
-		DefaultRulesGenerator $generator
+		DefaultRulesGenerator $generator,
+		array $sitemaps = []
 	): RobotsTxtBuilder {
 		$title = $this->createMock( Title::class );
 
@@ -127,7 +135,7 @@ class RobotsTxtBuilderTest extends MediaWikiUnitTestCase {
 			->with( $this->identicalTo( $title ) )
 			->willReturn( $revision );
 
-		return new RobotsTxtBuilder( $revisionLookup, $titleFactory, $generator, $useDefaults );
+		return new RobotsTxtBuilder( $revisionLookup, $titleFactory, $generator, $useDefaults, $sitemaps );
 	}
 
 	/**
@@ -304,5 +312,100 @@ class RobotsTxtBuilderTest extends MediaWikiUnitTestCase {
 		);
 
 		$this->assertSame( self::ALLOW_ALL_FILE, $builder->build() );
+	}
+
+	/**
+	 * The sitemap block goes after the text of the page, which is still
+	 * served as written (the page wins over the defaults, and the setting
+	 * does not change that).
+	 */
+	public function testSitemapsAreAppendedAfterPageText(): void {
+		$builder = $this->makeBuilder(
+			$this->makeRevision( new TextContent( "User-agent: *\nDisallow: /a\n" ) ),
+			true,
+			$this->makeGenerator( false ),
+			[ 'https://example.org/s.xml' ]
+		);
+
+		$this->assertSame(
+			"User-agent: *\nDisallow: /a\n\nSitemap: https://example.org/s.xml\n",
+			$builder->build()
+		);
+	}
+
+	/**
+	 * The sitemap block goes after the generated defaults.
+	 */
+	public function testSitemapsAreAppendedAfterDefaults(): void {
+		$builder = $this->makeBuilder(
+			null,
+			true,
+			$this->makeGenerator( true ),
+			[ 'https://example.org/s.xml' ]
+		);
+
+		$this->assertSame(
+			self::GENERATED . "\nSitemap: https://example.org/s.xml\n",
+			$builder->build()
+		);
+	}
+
+	/**
+	 * The sitemap block goes after the allow-all file too: a wiki that turns
+	 * the defaults off and writes no page can still announce its sitemaps.
+	 */
+	public function testSitemapsAreAppendedAfterAllowAll(): void {
+		$builder = $this->makeBuilder(
+			null,
+			false,
+			$this->makeGenerator( false ),
+			[ 'https://example.org/s.xml' ]
+		);
+
+		$this->assertSame(
+			self::ALLOW_ALL_FILE . "\nSitemap: https://example.org/s.xml\n",
+			$builder->build()
+		);
+	}
+
+	/**
+	 * A URL the page already lists is not repeated, while a new one is added.
+	 *
+	 * This pins what the duplicate check looks at: the page text as it is
+	 * served (after normalisation), not the raw text.
+	 */
+	public function testSitemapAlreadyInPageIsNotRepeated(): void {
+		$builder = $this->makeBuilder(
+			$this->makeRevision(
+				new TextContent( "User-agent: *\r\nDisallow: /a\r\nSitemap: https://example.org/old.xml\r\n" )
+			),
+			true,
+			$this->makeGenerator( false ),
+			[ 'https://example.org/old.xml', 'https://example.org/new.xml' ]
+		);
+
+		$this->assertSame(
+			"User-agent: *\nDisallow: /a\nSitemap: https://example.org/old.xml\n"
+				. "\nSitemap: https://example.org/new.xml\n",
+			$builder->build()
+		);
+	}
+
+	/**
+	 * An invalid entry does not break the file: the rules are served as
+	 * usual and a comment line reports the skipped entry.
+	 */
+	public function testInvalidSitemapEntryLeavesCommentOnly(): void {
+		$builder = $this->makeBuilder(
+			$this->makeRevision( new TextContent( "User-agent: *\nDisallow: /a\n" ) ),
+			true,
+			$this->makeGenerator( false ),
+			[ 'not a url' ]
+		);
+
+		$this->assertSame(
+			"User-agent: *\nDisallow: /a\n\n# RobotsTxt: invalid \$wgRobotsTxtSitemaps entries ignored: 1\n",
+			$builder->build()
+		);
 	}
 }

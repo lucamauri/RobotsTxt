@@ -92,7 +92,12 @@ class SpecialRobotsTxt extends SpecialPage {
 				$this->contentLanguage,
 				$this->namespaceInfo
 			),
-			(bool)$this->config->get( 'RobotsTxtUseDefaults' )
+			(bool)$this->config->get( 'RobotsTxtUseDefaults' ),
+			// The cast is a courtesy for a common slip: a single URL written
+			// as a string instead of a list becomes a list of one, and an
+			// unset value becomes an empty list. Whether each entry is a
+			// valid URL is decided later, by SitemapBlock.
+			(array)$this->config->get( 'RobotsTxtSitemaps' )
 		);
 		return $builder->build();
 	}

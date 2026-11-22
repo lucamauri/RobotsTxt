@@ -21,7 +21,7 @@ use MediaWiki\Title\TitleFactory;
  * them apart means this logic can be unit tested without a web request, and
  * the merge logic planned for phase 2 has a natural home.
  *
- * Rules, in order (phase 1):
+ * Rules, in order:
  *  1. If MediaWiki:Robots.txt has content, serve it as written and add
  *     nothing. This includes a page with only comments: writing the page is
  *     a deliberate choice by an administrator, so we do not second-guess it.
@@ -29,6 +29,11 @@ use MediaWiki\Title\TitleFactory;
  *     serve the defaults made by DefaultRulesGenerator.
  *  3. Otherwise serve an allow-all file, which is also what crawlers assume
  *     when a site has no robots.txt at all.
+ *
+ * Whichever of the three applies, the block of "Sitemap:" lines made from
+ * $wgRobotsTxtSitemaps is then appended (see SitemapBlock). That is the one
+ * addition to a page "served as written": the setting is explicit, and
+ * without it the setting would silently do nothing as soon as a page exists.
  */
 class RobotsTxtBuilder {
 
@@ -58,12 +63,16 @@ class RobotsTxtBuilder {
 	 * @param bool $useDefaults Value of $wgRobotsTxtUseDefaults. It is passed
 	 *   in, rather than read from the configuration here, so tests can set it
 	 *   without a MediaWiki configuration.
+	 * @param array $sitemaps Value of $wgRobotsTxtSitemaps, passed in for the
+	 *   same reason. It may hold anything: SitemapBlock skips what is not a
+	 *   valid URL. The empty list means "no Sitemap lines".
 	 */
 	public function __construct(
 		private readonly RevisionLookup $revisionLookup,
 		private readonly TitleFactory $titleFactory,
 		private readonly DefaultRulesGenerator $defaultRules,
-		private readonly bool $useDefaults
+		private readonly bool $useDefaults,
+		private readonly array $sitemaps = []
 	) {
 	}
 
@@ -73,6 +82,19 @@ class RobotsTxtBuilder {
 	 * @return string Always ends with exactly one newline.
 	 */
 	public function build(): string {
+		$text = $this->buildRules();
+
+		// The block is made from the final rules text, so that a URL the
+		// page already lists is recognised and not written twice.
+		return $text . SitemapBlock::render( $this->sitemaps, $text );
+	}
+
+	/**
+	 * Decide the rules part of the file: the page, the defaults or allow-all.
+	 *
+	 * @return string Always ends with exactly one newline.
+	 */
+	private function buildRules(): string {
 		$pageText = $this->getPageText();
 		if ( $pageText !== null ) {
 			return $this->normalise( $pageText );

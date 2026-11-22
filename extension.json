@@ -59,6 +59,10 @@
 		"RobotsTxtCacheMaxAge": {
 			"value": 3600,
 			"description": "Cache lifetime in seconds sent in the Cache-Control header of /robots.txt."
+		},
+		"RobotsTxtSitemaps": {
+			"value": [],
+			"description": "List of absolute http or https URLs of sitemaps. Each is written as a Sitemap: line at the end of /robots.txt, once. Invalid entries are skipped and reported in a comment line."
 		}
 	}
 }
