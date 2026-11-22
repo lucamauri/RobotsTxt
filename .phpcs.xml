@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<ruleset name="RobotsTxt">
+	<!-- The MediaWiki coding standard, registered by mediawiki-codesniffer. -->
+	<rule ref="MediaWiki"/>
+
+	<!-- Check every PHP file of the extension, except third-party code. -->
+	<file>.</file>
+	<arg name="extensions" value="php"/>
+	<arg name="encoding" value="UTF-8"/>
+	<exclude-pattern>vendor</exclude-pattern>
+	<exclude-pattern>node_modules</exclude-pattern>
+</ruleset>
