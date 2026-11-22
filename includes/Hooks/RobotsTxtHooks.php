@@ -8,7 +8,9 @@
 
 namespace MediaWiki\Extension\RobotsTxt\Hooks;
 
+use MediaWiki\Extension\RobotsTxt\RobotsTxtBuilder;
 use MediaWiki\Hook\TestCanonicalRedirectHook;
+use MediaWiki\Revision\Hook\ContentHandlerDefaultModelForHook;
 
 /**
  * Hook handlers of the RobotsTxt extension.
@@ -19,7 +21,7 @@ use MediaWiki\Hook\TestCanonicalRedirectHook;
  * can decide using only the arguments MediaWiki passes in. If a future handler
  * needs a service, add a "services" list to the HookHandlers entry.
  */
-class RobotsTxtHooks implements TestCanonicalRedirectHook {
+class RobotsTxtHooks implements TestCanonicalRedirectHook, ContentHandlerDefaultModelForHook {
 
 	/**
 	 * Stop MediaWiki from redirecting the English name of Special:RobotsTxt.
@@ -56,5 +58,58 @@ class RobotsTxtHooks implements TestCanonicalRedirectHook {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Create MediaWiki:Robots.txt as plain text instead of wikitext.
+	 *
+	 * Why this exists: pages in the MediaWiki namespace default to the
+	 * wikitext model, so an administrator who creates MediaWiki:Robots.txt
+	 * gets a wikitext page and has to switch it by hand with
+	 * Special:ChangeContentModel. Many then wrap the rules in <pre> tags to
+	 * make them display, and those tags end up in the served file. Making
+	 * "text" the default model for this one page removes that step and that
+	 * trap.
+	 *
+	 * How it works: MediaWiki asks this hook for the default model of a page
+	 * (MainSlotRoleHandler::getDefaultModel()) whenever no model is stored
+	 * for it. $model is passed by reference. A handler that has decided
+	 * writes the model into $model and returns false, which tells MediaWiki
+	 * to use that value. Returning true means "no opinion": MediaWiki carries
+	 * on with its own rules, and we must leave $model exactly as we found it.
+	 *
+	 * Scope: only the exact title MediaWiki:Robots.txt. Subpages (such as
+	 * MediaWiki:Robots.txt/it, the translation variants of system messages)
+	 * and the same name in other namespaces are not touched. For this title
+	 * our answer wins over a model set earlier, for example by
+	 * $wgNamespaceContentModels or another extension: a rule for one exact
+	 * page is more specific than a rule for a whole namespace.
+	 *
+	 * Existing pages are not affected. MediaWiki stores the model of a page
+	 * every time it is saved, and consults this hook only when nothing is
+	 * stored. A page that already exists keeps the model it has.
+	 *
+	 * Because the hook runs whenever MediaWiki needs the default model of any
+	 * page, the check must stay cheap: the cheapest comparison (the
+	 * namespace) comes first, the title text is read only for pages in the
+	 * MediaWiki namespace, and there is no database access.
+	 *
+	 * @param \MediaWiki\Title\Title $title Title in question
+	 * @param string &$model Model name; set to the "text" model for our page
+	 * @return bool False when we chose the model (our page), true for no opinion
+	 */
+	public function onContentHandlerDefaultModelFor( $title, &$model ) {
+		if ( $title->getNamespace() !== NS_MEDIAWIKI ) {
+			return true;
+		}
+
+		// The page name is shared with the builder that reads the page, so
+		// the two cannot drift apart.
+		if ( $title->getText() !== RobotsTxtBuilder::PAGE_NAME ) {
+			return true;
+		}
+
+		$model = CONTENT_MODEL_TEXT;
+		return false;
 	}
 }

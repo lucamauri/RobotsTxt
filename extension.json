@@ -40,6 +40,7 @@
 		}
 	},
 	"Hooks": {
+		"ContentHandlerDefaultModelFor": "main",
 		"TestCanonicalRedirect": "main"
 	},
 	"MessagesDirs": {

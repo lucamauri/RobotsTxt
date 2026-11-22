@@ -36,8 +36,12 @@ class RobotsTxtBuilder {
 	 * Title (without namespace) of the on-wiki page that holds the rules.
 	 * The page lives in the MediaWiki namespace, so editing it requires the
 	 * "editinterface" right.
+	 *
+	 * Public because it is the single source of truth for the page name: the
+	 * content model hook (RobotsTxtHooks) reads it to recognise the page it
+	 * must create as plain text, so the two can never drift apart.
 	 */
-	private const PAGE_NAME = 'Robots.txt';
+	public const PAGE_NAME = 'Robots.txt';
 
 	/**
 	 * A valid robots.txt that allows everything. An empty "Disallow" means

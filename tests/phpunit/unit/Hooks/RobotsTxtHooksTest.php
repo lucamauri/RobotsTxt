@@ -77,4 +77,92 @@ class RobotsTxtHooksTest extends MediaWikiUnitTestCase {
 			$hooks->onTestCanonicalRedirect( $request, $title, $output )
 		);
 	}
+
+	/**
+	 * Cases for onContentHandlerDefaultModelFor().
+	 *
+	 * Each case is [ namespace of the title, title text without namespace,
+	 * the value of $model when the hook is called, what the hook must
+	 * return, what $model must hold afterwards ].
+	 *
+	 * How to read the expected values: MediaWiki calls the hook with $model
+	 * passed by reference. A handler that has decided the model writes it
+	 * into $model and returns false; MediaWiki then uses it (see
+	 * MainSlotRoleHandler::getDefaultModel()). A handler with no opinion
+	 * returns true and leaves $model exactly as it found it.
+	 *
+	 * @return array<string,array{0:int,1:string,2:?string,3:bool,4:?string}>
+	 */
+	public static function provideDefaultModelCases(): array {
+		return [
+			'our page, no model chosen yet: we choose text' => [
+				NS_MEDIAWIKI, 'Robots.txt', null, false, CONTENT_MODEL_TEXT,
+			],
+			// Decision 2: the rule for this one title is more specific than a
+			// namespace-wide setting or an earlier handler, so it wins.
+			'our page, another model already set: we still choose text' => [
+				NS_MEDIAWIKI, 'Robots.txt', CONTENT_MODEL_WIKITEXT, false, CONTENT_MODEL_TEXT,
+			],
+			'another MediaWiki page: no opinion' => [
+				NS_MEDIAWIKI, 'Common.css', null, true, null,
+			],
+			'another MediaWiki page: a model set earlier is kept' => [
+				NS_MEDIAWIKI, 'Common.css', CONTENT_MODEL_CSS, true, CONTENT_MODEL_CSS,
+			],
+			// Right title text, wrong namespace: not the page we manage.
+			'same title in the main namespace: no opinion' => [
+				NS_MAIN, 'Robots.txt', null, true, null,
+			],
+			// Decision 1: exact title only, not subpages (which are the
+			// translation variants of MediaWiki system messages).
+			'subpage of our page: no opinion' => [
+				NS_MEDIAWIKI, 'Robots.txt/it', null, true, null,
+			],
+		];
+	}
+
+	/**
+	 * The hook must choose the "text" model for MediaWiki:Robots.txt and for
+	 * nothing else.
+	 *
+	 * The mock Title also pins how the handler decides. It asks for the
+	 * namespace exactly once, and asks for the title text only when the
+	 * namespace is the MediaWiki one. The hook runs whenever MediaWiki needs
+	 * the default model of any page, so the check must stay cheap: cheapest
+	 * comparison first, no database access.
+	 *
+	 * @dataProvider provideDefaultModelCases
+	 * @param int $namespace Namespace the mock Title reports
+	 * @param string $text Title text the mock Title reports
+	 * @param string|null $incomingModel Value of $model when the hook is called
+	 * @param bool $expectedReturn The value the hook must return
+	 * @param string|null $expectedModel What $model must hold after the call
+	 */
+	public function testOnContentHandlerDefaultModelFor(
+		int $namespace,
+		string $text,
+		?string $incomingModel,
+		bool $expectedReturn,
+		?string $expectedModel
+	): void {
+		$title = $this->createMock( Title::class );
+		$title->expects( $this->once() )
+			->method( 'getNamespace' )
+			->willReturn( $namespace );
+		$title->expects( $namespace === NS_MEDIAWIKI ? $this->once() : $this->never() )
+			->method( 'getText' )
+			->willReturn( $text );
+
+		// $model is passed by reference, exactly as MediaWiki passes it, so
+		// the handler can write its answer into it.
+		$model = $incomingModel;
+
+		$hooks = new RobotsTxtHooks();
+
+		$this->assertSame(
+			$expectedReturn,
+			$hooks->onContentHandlerDefaultModelFor( $title, $model )
+		);
+		$this->assertSame( $expectedModel, $model );
+	}
 }
