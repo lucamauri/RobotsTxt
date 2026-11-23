@@ -1,0 +1,49 @@
+# Continuous integration for the RobotsTxt extension.
+#
+# One job (two PHP versions), run on every push and pull request:
+#  - the MediaWiki coding standard (PHPCS, rules in .phpcs.xml), run with the
+#    codesniffer that MediaWiki core ships in its dev dependencies
+#  - the unit tests (PHPUnit), run inside a MediaWiki core checkout
+#
+# The extension is unit-tested only (MediaWikiUnitTestCase), so core does not need to be
+# installed as a wiki: a checkout with Composer dependencies is enough.
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  phpunit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mw: [ REL1_43 ]
+        php: [ '8.1', '8.3' ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: extension
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, intl, xml, ctype, json
+          tools: composer
+      - name: Check out MediaWiki core
+        run: git clone --depth 1 --branch ${{ matrix.mw }} https://gerrit.wikimedia.org/r/mediawiki/core.git mw
+      - name: Put the extension in place
+        run: mv extension mw/extensions/RobotsTxt
+      - name: Install core dependencies
+        working-directory: mw
+        run: composer install --no-interaction --prefer-dist
+      - name: Run PHPCS
+        working-directory: mw
+        run: vendor/bin/phpcs --standard=extensions/RobotsTxt/.phpcs.xml --extensions=php -p -s extensions/RobotsTxt
+      - name: Run the unit tests
+        working-directory: mw
+        run: composer run phpunit:entrypoint -- extensions/RobotsTxt/tests/phpunit/unit

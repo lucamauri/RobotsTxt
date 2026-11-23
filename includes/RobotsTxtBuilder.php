@@ -18,22 +18,30 @@ use MediaWiki\Title\TitleFactory;
  *
  * Why this is separate from the special page: the special page deals with
  * HTTP (headers, output), this class only decides what the text is. Keeping
- * them apart means this logic can be unit tested without a web request, and
- * the merge logic planned for phase 2 has a natural home.
+ * them apart means this logic can be unit tested without a web request.
  *
  * Rules, in order:
- *  1. If MediaWiki:Robots.txt has content, serve it as written and add
- *     nothing. This includes a page with only comments: writing the page is
+ *  1. If MediaWiki:Robots.txt has content, serve it and add nothing of our
+ *     own rules. This includes a page with only comments: writing the page is
  *     a deliberate choice by an administrator, so we do not second-guess it.
  *  2. If the page is missing or empty and generated defaults are enabled,
  *     serve the defaults made by DefaultRulesGenerator.
  *  3. Otherwise serve an allow-all file, which is also what crawlers assume
  *     when a site has no robots.txt at all.
  *
- * Whichever of the three applies, the block of "Sitemap:" lines made from
- * $wgRobotsTxtSitemaps is then appended (see SitemapBlock). That is the one
- * addition to a page "served as written": the setting is explicit, and
- * without it the setting would silently do nothing as soon as a page exists.
+ * Then two things are applied to whichever of the three was chosen:
+ *  - The central rules ($wgRobotsTxtCentralRules) and the wildcard
+ *    inheritance ($wgRobotsTxtInheritWildcard), but only when one of them is
+ *    in use. See buildRules() for the "fast path" that keeps the old output
+ *    byte for byte when neither is.
+ *  - The block of "Sitemap:" lines made from $wgRobotsTxtSitemaps (see
+ *    SitemapBlock). That is the one addition to a page "served as written":
+ *    the setting is explicit, and without it the setting would silently do
+ *    nothing as soon as a page exists.
+ *
+ * Invalid values in the two new settings never cause an error: the bad part
+ * is skipped and one comment line per setting, at the top of the file, says
+ * how many parts were skipped (CentralRulesValidator explains why).
  */
 class RobotsTxtBuilder {
 
@@ -66,13 +74,21 @@ class RobotsTxtBuilder {
 	 * @param array $sitemaps Value of $wgRobotsTxtSitemaps, passed in for the
 	 *   same reason. It may hold anything: SitemapBlock skips what is not a
 	 *   valid URL. The empty list means "no Sitemap lines".
+	 * @param mixed $centralRules Value of $wgRobotsTxtCentralRules, passed in
+	 *   raw for the same reason. It may hold anything: CentralRulesValidator
+	 *   skips what is not valid. The empty array means "no central rules".
+	 * @param mixed $inheritWildcard Value of $wgRobotsTxtInheritWildcard,
+	 *   raw as well: false, true, or a list of agent names. False means that
+	 *   nobody inherits.
 	 */
 	public function __construct(
 		private readonly RevisionLookup $revisionLookup,
 		private readonly TitleFactory $titleFactory,
 		private readonly DefaultRulesGenerator $defaultRules,
 		private readonly bool $useDefaults,
-		private readonly array $sitemaps = []
+		private readonly array $sitemaps = [],
+		private readonly mixed $centralRules = [],
+		private readonly mixed $inheritWildcard = false
 	) {
 	}
 
@@ -82,7 +98,14 @@ class RobotsTxtBuilder {
 	 * @return string Always ends with exactly one newline.
 	 */
 	public function build(): string {
-		$text = $this->buildRules();
+		$central = CentralRulesValidator::validateRules( $this->centralRules );
+		$inherit = CentralRulesValidator::validateInherit( $this->inheritWildcard );
+
+		// The report about invalid settings goes first, so it is the first
+		// thing an administrator sees when running curl on /robots.txt. It is
+		// empty (and so changes nothing) when both settings are valid.
+		$text = self::reportLines( $central['skipped'], $inherit['skipped'] )
+			. $this->buildRules( $central['rules'], $inherit['inherit'] );
 
 		// The block is made from the final rules text, so that a URL the
 		// page already lists is recognised and not written twice.
@@ -90,22 +113,74 @@ class RobotsTxtBuilder {
 	}
 
 	/**
+	 * The comment lines that report invalid settings.
+	 *
+	 * @param int $centralSkipped Parts of $wgRobotsTxtCentralRules ignored
+	 * @param int $inheritSkipped Parts of $wgRobotsTxtInheritWildcard ignored
+	 * @return string Zero, one or two comment lines, each ending in a newline
+	 */
+	private static function reportLines( int $centralSkipped, int $inheritSkipped ): string {
+		$text = '';
+		foreach ( [
+			'$wgRobotsTxtCentralRules' => $centralSkipped,
+			'$wgRobotsTxtInheritWildcard' => $inheritSkipped,
+		] as $name => $skipped ) {
+			$line = CentralRulesValidator::warningLine( $name, $skipped );
+			if ( $line !== '' ) {
+				$text .= $line . "\n";
+			}
+		}
+		return $text;
+	}
+
+	/**
 	 * Decide the rules part of the file: the page, the defaults or allow-all.
 	 *
+	 * Two paths:
+	 *  - The fast path, when there are no valid central rules and nobody
+	 *    inherits: the text is exactly what the extension served before these
+	 *    settings existed (the page normalised, or the defaults, or the
+	 *    allow-all file with its comment). The parser is not even run, so a
+	 *    wiki that does not use the new settings gets the same bytes as ever.
+	 *  - The merge path otherwise: the chosen text is parsed and merged with
+	 *    the central rules by RulesMerger. The allow-all file is then used
+	 *    without its comment line, which says "no rules defined" and would be
+	 *    wrong once there are central rules.
+	 *
+	 * @param array<string, array<string, list<string>>> $central Valid central rules
+	 * @param bool|string[] $inherit Valid inheritance setting
 	 * @return string Always ends with exactly one newline.
 	 */
-	private function buildRules(): string {
+	private function buildRules( array $central, $inherit ): string {
+		$merge = $central !== [] || $inherit !== false;
+
 		$pageText = $this->getPageText();
 		if ( $pageText !== null ) {
-			return $this->normalise( $pageText );
+			return $merge
+				? self::merge( $pageText, $central, $inherit )
+				: $this->normalise( $pageText );
 		}
 
 		if ( $this->useDefaults ) {
-			return $this->buildDefaults();
+			$defaults = $this->buildDefaults();
+			return $merge ? self::merge( $defaults, $central, $inherit ) : $defaults;
 		}
 
-		return "# RobotsTxt extension: no rules defined, everything is allowed.\n"
-			. self::ALLOW_ALL;
+		return $merge
+			? self::merge( self::ALLOW_ALL, $central, $inherit )
+			: "# RobotsTxt extension: no rules defined, everything is allowed.\n" . self::ALLOW_ALL;
+	}
+
+	/**
+	 * Merge a robots.txt text with the central rules.
+	 *
+	 * @param string $text The page text, the defaults or the allow-all file
+	 * @param array<string, array<string, list<string>>> $central Valid central rules
+	 * @param bool|string[] $inherit Valid inheritance setting
+	 * @return string
+	 */
+	private static function merge( string $text, array $central, $inherit ): string {
+		return RulesMerger::merge( $central, RobotsTxtParser::parse( $text ), $inherit );
 	}
 
 	/**

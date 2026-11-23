@@ -5,5 +5,10 @@
         ]
     },
     "robotstxt-desc": "Serves robots.txt from the wiki, using the page MediaWiki:Robots.txt or generated default rules.",
-    "robotstxt": "Robots.txt"
+    "robotstxt": "Robots.txt",
+    "robotstxt-lint-intro": "This text may not work as intended in a robots.txt file. You can still save it, but crawlers ignore lines they do not understand:",
+    "robotstxt-lint-nocolon": "Line $1 has no colon, so crawlers ignore it: $2",
+    "robotstxt-lint-orphan": "Line $1 is an Allow or Disallow rule that comes before the first User-agent line, so crawlers ignore it: $2",
+    "robotstxt-lint-path": "Line $1: the value of an Allow or Disallow rule should start with / or *, otherwise it matches nothing: $2",
+    "robotstxt-lint-more": "…and $1 more."
 }

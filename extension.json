@@ -41,6 +41,7 @@
 	},
 	"Hooks": {
 		"ContentHandlerDefaultModelFor": "main",
+		"EditPage::showEditForm:initial": "main",
 		"TestCanonicalRedirect": "main"
 	},
 	"MessagesDirs": {
@@ -63,6 +64,14 @@
 		"RobotsTxtSitemaps": {
 			"value": [],
 			"description": "List of absolute http or https URLs of sitemaps. Each is written as a Sitemap: line at the end of /robots.txt, once. Invalid entries are skipped and reported in a comment line."
+		},
+		"RobotsTxtCentralRules": {
+			"value": [],
+			"description": "Rules that are always part of /robots.txt, merged with MediaWiki:Robots.txt or the generated defaults. An array keyed by user agent; each value maps a directive name (Disallow, Allow, Crawl-delay, any other) to a value or a list of values. Invalid parts are skipped and reported in a comment line at the top of the file."
+		},
+		"RobotsTxtInheritWildcard": {
+			"value": false,
+			"description": "Copy the Allow and Disallow rules of the * group into the groups of named user agents, because a crawler that finds a group naming it ignores the * group. False: nobody inherits. True: every named agent inherits. A list of agent names: only those inherit."
 		}
 	}
 }

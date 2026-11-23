@@ -8,8 +8,11 @@
 
 namespace MediaWiki\Extension\RobotsTxt\Hooks;
 
+use MediaWiki\Extension\RobotsTxt\PageLinter;
 use MediaWiki\Extension\RobotsTxt\RobotsTxtBuilder;
+use MediaWiki\Hook\EditPage__showEditForm_initialHook;
 use MediaWiki\Hook\TestCanonicalRedirectHook;
+use MediaWiki\Html\Html;
 use MediaWiki\Revision\Hook\ContentHandlerDefaultModelForHook;
 
 /**
@@ -21,7 +24,17 @@ use MediaWiki\Revision\Hook\ContentHandlerDefaultModelForHook;
  * can decide using only the arguments MediaWiki passes in. If a future handler
  * needs a service, add a "services" list to the HookHandlers entry.
  */
-class RobotsTxtHooks implements TestCanonicalRedirectHook, ContentHandlerDefaultModelForHook {
+class RobotsTxtHooks implements
+	TestCanonicalRedirectHook,
+	ContentHandlerDefaultModelForHook,
+	EditPage__showEditForm_initialHook
+{
+
+	/**
+	 * How many problems the warning box lists at most. More than this would only
+	 * flood the edit form; the rest is summarised in one line.
+	 */
+	private const MAX_PROBLEMS_SHOWN = 20;
 
 	/**
 	 * Stop MediaWiki from redirecting the English name of Special:RobotsTxt.
@@ -111,5 +124,78 @@ class RobotsTxtHooks implements TestCanonicalRedirectHook, ContentHandlerDefault
 
 		$model = CONTENT_MODEL_TEXT;
 		return false;
+	}
+
+	/**
+	 * Warn, above the edit form of MediaWiki:Robots.txt, about common mistakes in its text.
+	 *
+	 * Why this exists: crawlers silently ignore a line they cannot read, so a forgotten colon or
+	 * a path without its leading slash makes a rule do nothing and nobody notices (see
+	 * PageLinter for the three mistakes that are reported).
+	 *
+	 * How it works: MediaWiki calls this hook just before it shows the edit form. At that point
+	 * the text of the edit box is already in $editor->textbox1: the saved text when the form
+	 * first opens, or the submitted text after "Show preview" or a save that needs another look
+	 * (an edit conflict, for example). The warning therefore appears when the form opens or
+	 * reloads, not at the moment of saving: a successful save leads to the page view, which is
+	 * not an edit form.
+	 *
+	 * It never blocks anything. The handler returns true, never false: returning false from this
+	 * hook would abort the chain and stop other extensions' handlers from running. For every
+	 * page other than MediaWiki:Robots.txt it does nothing; the namespace is compared first,
+	 * because that is the cheapest check.
+	 *
+	 * @param \MediaWiki\EditPage\EditPage $editor The edit form being shown
+	 * @param \MediaWiki\Output\OutputPage $out Where the warning box is written
+	 * @return bool Always true, so the hook chain continues
+	 */
+	public function onEditPage__showEditForm_initial( // phpcs:ignore MediaWiki.NamingConventions
+		$editor, $out
+	) {
+		$title = $editor->getTitle();
+		if ( $title->getNamespace() !== NS_MEDIAWIKI ) {
+			return true;
+		}
+		if ( $title->getText() !== RobotsTxtBuilder::PAGE_NAME ) {
+			return true;
+		}
+
+		$problems = PageLinter::lint( (string)$editor->textbox1 );
+		if ( $problems === [] ) {
+			return true;
+		}
+
+		// The message keys are written out in full (not built from the type) so that tools
+		// that look for the use of each key can find them.
+		$messageKeys = [
+			'nocolon' => 'robotstxt-lint-nocolon',
+			'orphan' => 'robotstxt-lint-orphan',
+			'path' => 'robotstxt-lint-path',
+		];
+
+		$items = '';
+		foreach ( array_slice( $problems, 0, self::MAX_PROBLEMS_SHOWN ) as $problem ) {
+			$items .= Html::rawElement(
+				'li',
+				[],
+				// The line text comes from the edit box, so it is escaped.
+				$out->msg( $messageKeys[$problem['type']], (string)$problem['line'], $problem['text'] )
+					->escaped()
+			);
+		}
+		$hidden = count( $problems ) - self::MAX_PROBLEMS_SHOWN;
+		if ( $hidden > 0 ) {
+			$items .= Html::rawElement(
+				'li',
+				[],
+				$out->msg( 'robotstxt-lint-more', (string)$hidden )->escaped()
+			);
+		}
+
+		$out->addHTML( Html::warningBox(
+			$out->msg( 'robotstxt-lint-intro' )->escaped() . Html::rawElement( 'ul', [], $items )
+		) );
+
+		return true;
 	}
 }

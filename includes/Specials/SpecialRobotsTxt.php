@@ -97,7 +97,13 @@ class SpecialRobotsTxt extends SpecialPage {
 			// as a string instead of a list becomes a list of one, and an
 			// unset value becomes an empty list. Whether each entry is a
 			// valid URL is decided later, by SitemapBlock.
-			(array)$this->config->get( 'RobotsTxtSitemaps' )
+			(array)$this->config->get( 'RobotsTxtSitemaps' ),
+			// These two are passed raw: whatever an administrator wrote in
+			// LocalSettings.php is checked by CentralRulesValidator inside
+			// the builder, which skips what is invalid and reports it in a
+			// comment line instead of failing.
+			$this->config->get( 'RobotsTxtCentralRules' ),
+			$this->config->get( 'RobotsTxtInheritWildcard' )
 		);
 		return $builder->build();
 	}
