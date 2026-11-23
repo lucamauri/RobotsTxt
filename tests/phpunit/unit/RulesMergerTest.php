@@ -20,7 +20,9 @@ use MediaWikiUnitTestCase;
  * together. The expected texts are derived by hand from the rules in the class documentation
  * of RulesMerger (decisions 27 and 28), not by running the code.
  *
- * Inheritance is not part of this batch: every case passes `false` as the third argument.
+ * Two test methods share the class. testMerge() is batch E-3a (split, merge by agent, duplicates,
+ * re-join, render) and always passes `false` for inheritance. testMergeWithOptions() is batch
+ * E-3b: wildcard inheritance, the empty `Disallow:` rule and the `Crawl-delay` warning.
  *
  * @group RobotsTxt
  * @covers \MediaWiki\Extension\RobotsTxt\RulesMerger
@@ -38,6 +40,22 @@ class RulesMergerTest extends MediaWikiUnitTestCase {
 		$this->assertSame(
 			$expected,
 			RulesMerger::merge( $central, RobotsTxtParser::parse( $pageText ), false )
+		);
+	}
+
+	/**
+	 * @dataProvider provideMergeWithOptions
+	 * @param array $central
+	 * @param string $pageText
+	 * @param bool|string[] $inherit
+	 * @param string $expected
+	 */
+	public function testMergeWithOptions(
+		array $central, string $pageText, $inherit, string $expected
+	): void {
+		$this->assertSame(
+			$expected,
+			RulesMerger::merge( $central, RobotsTxtParser::parse( $pageText ), $inherit )
 		);
 	}
 
@@ -257,6 +275,226 @@ class RulesMergerTest extends MediaWikiUnitTestCase {
 			"User-agent: ClaudeBot\nUser-agent: GPTBot\nDisallow: /\n"
 				. "\nUser-agent: *\nDisallow: /w/\n"
 				. "\nSitemap: https://wiki.example/sitemap.xml\n",
+		];
+	}
+
+	/**
+	 * Batch E-3b. The pipeline is: merge by agent, inherit from `*`, drop the empty `Disallow:`,
+	 * join identical agents, add the `Crawl-delay` warning.
+	 *
+	 * @return iterable
+	 */
+	public static function provideMergeWithOptions(): iterable {
+		$wild = "User-agent: *\nDisallow: /w/\nAllow: /w/load.php\n";
+
+		// Inheritance: who inherits.
+		yield 'inherit true: a named agent gets the wildcard rules first' => [
+			[],
+			$wild . "\nUser-agent: GPTBot\nDisallow: /g/\n",
+			true,
+			$wild . "\nUser-agent: GPTBot\nDisallow: /w/\nAllow: /w/load.php\nDisallow: /g/\n",
+		];
+		yield 'inherit false: nothing is copied' => [
+			[],
+			$wild . "\nUser-agent: GPTBot\nDisallow: /g/\n",
+			false,
+			$wild . "\nUser-agent: GPTBot\nDisallow: /g/\n",
+		];
+		yield 'inherit list: only the listed agents, ignoring case' => [
+			[],
+			$wild . "\nUser-agent: GPTBot\nDisallow: /g/\n"
+				. "\nUser-agent: ClaudeBot\nDisallow: /c/\n",
+			[ 'GPTBOT' ],
+			$wild . "\nUser-agent: GPTBot\nDisallow: /w/\nAllow: /w/load.php\nDisallow: /g/\n"
+				. "\nUser-agent: ClaudeBot\nDisallow: /c/\n",
+		];
+		yield 'inherit list: an agent that does not exist is not created' => [
+			[],
+			$wild,
+			[ 'Nobody' ],
+			$wild,
+		];
+		yield 'inherit list: the wildcard does not inherit from itself' => [
+			[],
+			$wild,
+			[ '*' ],
+			$wild,
+		];
+		yield 'inherit true: the wildcard alone is unchanged' => [
+			[],
+			$wild,
+			true,
+			$wild,
+		];
+		yield 'inherit true: no wildcard group, nothing to copy' => [
+			[],
+			"User-agent: GPTBot\nDisallow: /g/\n",
+			true,
+			"User-agent: GPTBot\nDisallow: /g/\n",
+		];
+
+		// Inheritance: what is copied and how.
+		yield 'only Allow and Disallow are copied' => [
+			[],
+			"User-agent: *\nCrawl-delay: 5\nDisallow: /w/\njunk\n"
+				. "\nUser-agent: GPTBot\nDisallow: /g/\n",
+			true,
+			"User-agent: *\nCrawl-delay: 5\nDisallow: /w/\njunk\n"
+				. "\nUser-agent: GPTBot\nDisallow: /w/\nDisallow: /g/\n",
+		];
+		yield 'a rule the agent already has is not repeated, the copy comes first' => [
+			[],
+			"User-agent: *\nDisallow: /w/\n\nUser-agent: GPTBot\nDisallow: /g/\nDisallow: /w/\n",
+			true,
+			"User-agent: *\nDisallow: /w/\n\nUser-agent: GPTBot\nDisallow: /w/\nDisallow: /g/\n",
+		];
+		yield 'comments are not copied with the rules' => [
+			[],
+			"User-agent: *\n# keep out\nDisallow: /w/ # wiki\n"
+				. "\nUser-agent: GPTBot\nDisallow: /g/\n",
+			true,
+			"User-agent: *\n# keep out\nDisallow: /w/ # wiki\n"
+				. "\nUser-agent: GPTBot\nDisallow: /w/\nDisallow: /g/\n",
+		];
+		yield 'central wildcard rules are inherited too' => [
+			[ '*' => [ 'Disallow' => [ '/admin/' ] ] ],
+			"User-agent: GPTBot\nDisallow: /g/\n",
+			true,
+			"User-agent: *\nDisallow: /admin/\n"
+				. "\nUser-agent: GPTBot\nDisallow: /admin/\nDisallow: /g/\n",
+		];
+		yield 'an agent that inherits everything joins the wildcard group' => [
+			[],
+			"User-agent: *\nDisallow: /w/\n\nUser-agent: A\nUser-agent: B\n",
+			true,
+			"User-agent: *\nUser-agent: A\nUser-agent: B\nDisallow: /w/\n",
+		];
+
+		// The empty Disallow.
+		yield 'empty Disallow is dropped when another rule exists' => [
+			[],
+			"User-agent: *\nDisallow:\nDisallow: /a/\n",
+			false,
+			"User-agent: *\nDisallow: /a/\n",
+		];
+		yield 'empty Disallow is dropped whatever its spelling, with its comment' => [
+			[],
+			"User-agent: *\ndisallow: # open\nDisallow: /a\n",
+			false,
+			"User-agent: *\nDisallow: /a\n",
+		];
+		yield 'empty Disallow is dropped next to an Allow' => [
+			[],
+			"User-agent: *\nDisallow:\nAllow: /a\n",
+			false,
+			"User-agent: *\nAllow: /a\n",
+		];
+		yield 'empty Disallow alone is kept' => [
+			[],
+			"User-agent: *\nDisallow:\n",
+			false,
+			"User-agent: *\nDisallow:\n",
+		];
+		yield 'other directives do not count as rules' => [
+			[],
+			"User-agent: *\nDisallow:\nCrawl-delay: 5\n",
+			false,
+			"User-agent: *\nDisallow:\nCrawl-delay: 5\n",
+		];
+		yield 'an empty Allow is never dropped' => [
+			[],
+			"User-agent: *\nAllow:\nDisallow: /a\n",
+			false,
+			"User-agent: *\nAllow:\nDisallow: /a\n",
+		];
+		yield 'the rule works group by group' => [
+			[],
+			"User-agent: A\nDisallow:\n\nUser-agent: B\nDisallow: /b\n",
+			false,
+			"User-agent: A\nDisallow:\n\nUser-agent: B\nDisallow: /b\n",
+		];
+		yield 'an empty central Disallow gives way to a page rule' => [
+			[ '*' => [ 'Disallow' => [ '' ] ] ],
+			"User-agent: *\nDisallow: /a/\n",
+			false,
+			"User-agent: *\nDisallow: /a/\n",
+		];
+		yield 'an empty wildcard Disallow is inherited like any other Disallow' => [
+			[],
+			"User-agent: *\nDisallow:\n\nUser-agent: GPTBot\nCrawl-delay: 3\n",
+			true,
+			"User-agent: *\nDisallow:\n\nUser-agent: GPTBot\nDisallow:\nCrawl-delay: 3\n",
+		];
+		yield 'the empty Disallow is dropped after inheriting, not before' => [
+			[],
+			"User-agent: *\nDisallow:\n\nUser-agent: GPTBot\nAllow: /a\n",
+			true,
+			"User-agent: *\nDisallow:\n\nUser-agent: GPTBot\nAllow: /a\n",
+		];
+
+		// The Crawl-delay warning.
+		yield 'two Crawl-delay values give a warning, both lines kept, central first' => [
+			[ '*' => [ 'Crawl-delay' => [ '10' ] ] ],
+			"User-agent: *\nCrawl-delay: 5\n",
+			false,
+			"User-agent: *\n# RobotsTxt: conflicting Crawl-delay values in this group (10, 5)\n"
+				. "Crawl-delay: 10\nCrawl-delay: 5\n",
+		];
+		yield 'three values are all listed, in order' => [
+			[],
+			"User-agent: *\nCrawl-delay: 10\nCrawl-delay: 5\nCrawl-delay: 2\n",
+			false,
+			"User-agent: *\n# RobotsTxt: conflicting Crawl-delay values in this group (10, 5, 2)\n"
+				. "Crawl-delay: 10\nCrawl-delay: 5\nCrawl-delay: 2\n",
+		];
+		yield 'the same value twice is only a duplicate, no warning' => [
+			[],
+			"User-agent: *\nCrawl-delay: 5\nCrawl-delay: 5\n",
+			false,
+			"User-agent: *\nCrawl-delay: 5\n",
+		];
+		yield 'one value gives no warning' => [
+			[],
+			"User-agent: *\nCrawl-delay: 5\n",
+			false,
+			"User-agent: *\nCrawl-delay: 5\n",
+		];
+		yield 'different values in different groups give no warning' => [
+			[],
+			"User-agent: A\nCrawl-delay: 5\n\nUser-agent: B\nCrawl-delay: 10\n",
+			false,
+			"User-agent: A\nCrawl-delay: 5\n\nUser-agent: B\nCrawl-delay: 10\n",
+		];
+		yield 'the directive name is matched ignoring case, spelling kept' => [
+			[],
+			"User-agent: *\ncrawl-delay: 5\nCRAWL-DELAY: 7\n",
+			false,
+			"User-agent: *\n# RobotsTxt: conflicting Crawl-delay values in this group (5, 7)\n"
+				. "crawl-delay: 5\nCRAWL-DELAY: 7\n",
+		];
+		yield 'a joined group gets one warning, after all its agent lines' => [
+			[
+				'A' => [ 'Crawl-delay' => [ '1', '2' ] ],
+				'B' => [ 'Crawl-delay' => [ '1', '2' ] ],
+			],
+			'',
+			false,
+			"User-agent: A\nUser-agent: B\n"
+				. "# RobotsTxt: conflicting Crawl-delay values in this group (1, 2)\n"
+				. "Crawl-delay: 1\nCrawl-delay: 2\n",
+		];
+
+		// All three together.
+		yield 'realistic file with central rules, inheritance and an empty Disallow' => [
+			[
+				'ClaudeBot' => [ 'Disallow' => [ '/' ] ],
+				'GPTBot' => [ 'Disallow' => [ '/' ] ],
+			],
+			$wild . "\nUser-agent: Googlebot\nDisallow:\n",
+			true,
+			"User-agent: ClaudeBot\nUser-agent: GPTBot\n"
+				. "Disallow: /w/\nAllow: /w/load.php\nDisallow: /\n"
+				. "\nUser-agent: *\nUser-agent: Googlebot\nDisallow: /w/\nAllow: /w/load.php\n",
 		];
 	}
 }

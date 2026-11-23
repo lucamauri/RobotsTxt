@@ -1,6 +1,6 @@
 <?php
 /**
- * Merging of the central rules with the rules of the page (step E, batch E-3a).
+ * Merging of the central rules with the rules of the page (step E, batches E-3a and E-3b).
  *
  * @license GPL-2.0-or-later
  * @file
@@ -25,10 +25,23 @@ namespace MediaWiki\Extension\RobotsTxt;
  *    Disallow for the same path, are all kept, because a crawler resolves them by the longest
  *    match, not by order. Lines the parser could not understand (directive null) are never
  *    removed: we do not know what they mean.
- * 4. Join again the agents whose rule lists are identical, comments included, into one group
+ * 4. Inheritance (decision 29), only when `$inherit` asks for it: every chosen agent (all agents
+ *    except `*` for `true`, or the listed ones, ignoring case) receives the `Allow` and
+ *    `Disallow` rules of the merged `*` group, placed before its own rules. The copies carry
+ *    no comments. A rule the agent already has is not repeated. Why: a crawler that finds a
+ *    group naming it ignores the `*` group completely (trap 3), so without this a named agent
+ *    silently loses every general restriction.
+ * 5. The empty `Disallow:` rule (decision 30): an empty `Disallow:` means "allow everything",
+ *    so it is dropped from a group that has any other `Allow` or `Disallow` line, and kept when
+ *    it is the group's only such line. This runs after inheritance, because a copied empty
+ *    `Disallow:` is judged against the rules the agent has in the end.
+ * 6. Join again the agents whose rule lists are identical, comments included, into one group
  *    placed where the first of them was. Without this step, every shared group would come out
  *    split in one group per agent.
- * 5. Render: preamble, groups, closing comments (the footer), then the `Sitemap:` lines of the
+ * 7. Warn about conflicting values of a directive that can have only one (see
+ *    SINGLE_VALUED_DIRECTIVES): a comment line is put after the agent lines of the final group.
+ *    Both rules are kept, because we cannot know which one the author meant.
+ * 8. Render: preamble, groups, closing comments (the footer), then the `Sitemap:` lines of the
  *    page. Sections are separated by one blank line and the text ends with one line break.
  *
  * Comments: a comment above or beside a line stays with that line. When a page group is merged
@@ -36,9 +49,6 @@ namespace MediaWiki\Extension\RobotsTxt;
  * line (above and inline) move onto the first rule the group adds. If the group adds no rule
  * (all duplicates, or none), those comments are dropped. The comments of a removed duplicate
  * rule are dropped with it.
- *
- * Not in this batch (E-3b): wildcard inheritance, the rule about the empty `Disallow:` line, and
- * the warning for conflicting `Crawl-delay` values.
  *
  * The class is pure (no MediaWiki dependency), so it is unit-tested alone.
  *
@@ -49,13 +59,19 @@ namespace MediaWiki\Extension\RobotsTxt;
 class RulesMerger {
 
 	/**
+	 * Directives that make sense only once per group, in lower case, with the name used in the
+	 * warning. Two different values of one of them in the same group get a warning comment.
+	 */
+	private const SINGLE_VALUED_DIRECTIVES = [ 'crawl-delay' => 'Crawl-delay' ];
+
+	/**
 	 * Merge the central rules with a parsed robots.txt text and render the result.
 	 *
 	 * @param array<string, array<string, list<string>>> $central Output of
 	 *  CentralRulesValidator::validateRules()['rules']: agent to directive name to list of values
 	 * @param array $parsed Output of RobotsTxtParser::parse() for the page or for the defaults
-	 * @param bool|string[] $inherit Output of CentralRulesValidator::validateInherit()['inherit'].
-	 *  Not used yet: it is accepted now so the signature does not change in batch E-3b.
+	 * @param bool|string[] $inherit Output of CentralRulesValidator::validateInherit()['inherit']:
+	 *  false for nobody, true for every named agent, or a list of agent names
 	 * @return string The rules text ending in one line break, or '' when there is nothing
 	 */
 	public static function merge( array $central, array $parsed, $inherit ): string {
@@ -75,7 +91,13 @@ class RulesMerger {
 			}
 		}
 
-		// Step 4: agents with the same rule lines share a group. The rendered rules are the
+		// Steps 4 and 5: inheritance from `*`, then the empty `Disallow:` rule.
+		self::inheritWildcard( $agents, $inherit );
+		foreach ( $agents as $key => $agent ) {
+			$agents[$key]['rules'] = self::dropEmptyDisallow( $agent['rules'] );
+		}
+
+		// Step 6: agents with the same rule lines share a group. The rendered rules are the
 		// key, so lines that differ only by a comment are different (conservative).
 		$groups = [];
 		foreach ( $agents as $agent ) {
@@ -92,7 +114,10 @@ class RulesMerger {
 			$sections[] = self::renderLines( $parsed['preamble'] );
 		}
 		foreach ( $groups as $group ) {
-			$sections[] = self::renderLines( array_merge( $group['agents'], $group['rules'] ) );
+			// Step 7: the warnings are worked out on the final group, so a joined group gets one.
+			$sections[] = self::renderLines( $group['agents'] )
+				. self::conflictWarnings( $group['rules'] )
+				. ( $group['rules'] === [] ? '' : "\n" . self::renderLines( $group['rules'] ) );
 		}
 		if ( $parsed['footer'] !== [] ) {
 			$sections[] = implode( "\n", $parsed['footer'] );
@@ -102,6 +127,138 @@ class RulesMerger {
 		}
 
 		return $sections === [] ? '' : implode( "\n\n", $sections ) . "\n";
+	}
+
+	/**
+	 * Copy the Allow and Disallow rules of the `*` group into the agents chosen by `$inherit`.
+	 *
+	 * The copies go first, then the agent's own rules, except those the agent already has.
+	 * Comments are not copied: they describe the rule where it was written. Nothing happens when
+	 * nobody inherits or when there is no `*` group.
+	 *
+	 * @param array &$agents The collection built by addAgent(), changed in place
+	 * @param bool|string[] $inherit
+	 */
+	private static function inheritWildcard( array &$agents, $inherit ): void {
+		if ( $inherit === false || $inherit === [] || !isset( $agents['*'] ) ) {
+			return;
+		}
+		$chosen = $inherit === true ? null : array_map( 'mb_strtolower', $inherit );
+
+		$copies = [];
+		foreach ( $agents['*']['rules'] as $rule ) {
+			if ( $rule['directive'] !== null && self::isAllowOrDisallow( $rule ) ) {
+				$rule['comment'] = null;
+				$rule['before'] = [];
+				$copies[] = $rule;
+			}
+		}
+
+		foreach ( $agents as $key => $agent ) {
+			if ( $key === '*' || ( $chosen !== null && !in_array( $key, $chosen, true ) ) ) {
+				continue;
+			}
+			$rules = $copies;
+			$taken = [];
+			foreach ( $copies as $copy ) {
+				$taken[self::duplicateKey( $copy )] = true;
+			}
+			foreach ( $agent['rules'] as $rule ) {
+				$alreadyCopied = $rule['directive'] !== null
+					&& isset( $taken[self::duplicateKey( $rule )] );
+				if ( !$alreadyCopied ) {
+					$rules[] = $rule;
+				}
+			}
+			$agents[$key]['rules'] = $rules;
+		}
+	}
+
+	/**
+	 * Remove the empty `Disallow:` lines from a rule list that has another Allow or Disallow line.
+	 *
+	 * An empty `Allow:` is not touched and counts as "another line"; an empty `Disallow:` alone
+	 * stays, because it is the group's whole meaning.
+	 *
+	 * @param array[] $rules
+	 * @return array[]
+	 */
+	private static function dropEmptyDisallow( array $rules ): array {
+		$hasOther = false;
+		foreach ( $rules as $rule ) {
+			if ( self::isAllowOrDisallow( $rule ) && !self::isEmptyDisallow( $rule ) ) {
+				$hasOther = true;
+				break;
+			}
+		}
+		if ( !$hasOther ) {
+			return $rules;
+		}
+		return array_values( array_filter(
+			$rules,
+			static function ( array $rule ): bool {
+				return !self::isEmptyDisallow( $rule );
+			}
+		) );
+	}
+
+	/**
+	 * Build the warning comment lines for a final group, each one preceded by a line break.
+	 *
+	 * @param array[] $rules The final rules of the group
+	 * @return string The lines to put after the agent lines, or '' when there is no conflict
+	 */
+	private static function conflictWarnings( array $rules ): string {
+		$text = '';
+		foreach ( self::SINGLE_VALUED_DIRECTIVES as $lower => $name ) {
+			$values = [];
+			foreach ( $rules as $rule ) {
+				if ( self::hasDirective( $rule, $lower ) ) {
+					$values[] = $rule['value'];
+				}
+			}
+			// Exact duplicates are already gone, so two or more values are different values.
+			if ( count( $values ) > 1 ) {
+				$text .= "\n# RobotsTxt: conflicting " . $name . ' values in this group ('
+					. implode( ', ', $values ) . ')';
+			}
+		}
+		return $text;
+	}
+
+	/**
+	 * The key that makes two rules exact duplicates: directive in lower case, value as written.
+	 *
+	 * @param array $rule A rule whose directive is not null
+	 * @return string
+	 */
+	private static function duplicateKey( array $rule ): string {
+		return mb_strtolower( $rule['directive'] ) . "\0" . $rule['value'];
+	}
+
+	/**
+	 * @param array $rule
+	 * @return bool Whether the line is an understood `Allow` or `Disallow`
+	 */
+	private static function isAllowOrDisallow( array $rule ): bool {
+		return self::hasDirective( $rule, 'allow' ) || self::hasDirective( $rule, 'disallow' );
+	}
+
+	/**
+	 * @param array $rule
+	 * @return bool Whether the line is a `Disallow:` with no value
+	 */
+	private static function isEmptyDisallow( array $rule ): bool {
+		return self::hasDirective( $rule, 'disallow' ) && $rule['value'] === '';
+	}
+
+	/**
+	 * @param array $rule
+	 * @param string $lowerName A directive name in lower case
+	 * @return bool Whether the line is an understood directive with that name, in any case
+	 */
+	private static function hasDirective( array $rule, string $lowerName ): bool {
+		return $rule['directive'] !== null && mb_strtolower( $rule['directive'] ) === $lowerName;
 	}
 
 	/**
@@ -161,7 +318,7 @@ class RulesMerger {
 		foreach ( $rules as $rule ) {
 			// Only lines the parser understood can be duplicates.
 			if ( $rule['directive'] !== null ) {
-				$duplicateKey = mb_strtolower( $rule['directive'] ) . "\0" . $rule['value'];
+				$duplicateKey = self::duplicateKey( $rule );
 				if ( isset( $agents[$key]['seen'][$duplicateKey] ) ) {
 					continue;
 				}
